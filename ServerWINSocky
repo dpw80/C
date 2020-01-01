@@ -1,0 +1,164 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <WinSock2.h>
+#include <WS2tcpip.h>
+#include <sys/timeb.h>
+#include <sys/types.h>
+#define _WINSOCK_DEPRECATED_NO_WARNINGS 
+#define  BUF_SIZE 1024
+#define PORT 7
+
+int main(int argc, char *argv[]) //具有命令列參數
+{
+	int							opt = TRUE;
+	int							master_socket;
+	int							addrlen;
+	int							new_socket;
+	int							client_socket[10];
+	int							max_clients = 10;
+	int							activity;
+	int							sd;
+	int							max_sd;
+	struct sockaddr_in	address;
+	char						buffer[BUF_SIZE];
+	fd_set					readfds;
+	int							ret;
+	WSADATA				wsd;
+	ret = WSAStartup(MAKEWORD(2, 2), &wsd); //啟動winsock執行環境
+	if (ret != 0)
+	{
+		printf("Winsock Startup failed!\n");
+		return -1;
+	}
+
+	for (int i = 0; i < max_clients; i++) //把客戶socket Reset
+	{
+		client_socket[i] = 0;
+	}
+	master_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);//建立主機socket之後做綁定
+	if (master_socket == 0)
+	{
+		printf("MasterScoket error.\n");
+		return -1;
+	}
+
+  //==========可有可無============
+	ret = setsockopt(master_socket, SOL_SOCKET, SO_REUSEADDR, (char *)&opt,sizeof(opt));
+	if (ret < 0)
+	{
+		printf("setsockoptr error.\n");
+		return -1;
+	}
+  //=============================
+  
+	address.sin_family = AF_INET;//做address設定
+	address.sin_addr.s_addr = htonl(INADDR_ANY);
+	address.sin_port = htons(PORT);
+	addrlen = sizeof(address);
+
+	ret = bind(master_socket, (struct sockaddr *)&address, addrlen);
+	if (ret == -1)
+	{
+		printf("Bind error.\n");
+		closesocket(master_socket);
+		WSACleanup();
+		return -1;
+	}
+
+	printf("Listener on port %d \n", PORT);
+	ret = listen(master_socket, 10);
+	if (ret < 0)
+	{
+		printf("listen error.\n");
+		return -1;
+	}
+	
+	addrlen = sizeof(address);
+	printf("Waiting for connecting...");
+
+	while (1)
+	{
+		FD_ZERO(&readfds);
+		FD_SET(master_socket, &readfds);
+		max_sd = master_socket;
+
+		for (int i = 0; i < max_clients; i++)
+		{
+			sd = client_socket[i];
+			if (sd > 0)
+			{
+				FD_SET(sd, &readfds);
+			}		
+			if (sd > max_sd)
+			{
+				max_sd = sd;
+			}
+		}
+
+		activity = select(max_sd + 1, &readfds, NULL, NULL, NULL);
+		if (activity < 0)
+		{
+			printf("Select error.\n");
+		}
+		//printf("Select Complete.\n");
+
+		if (FD_ISSET(master_socket, &readfds))
+		{
+			new_socket = accept(master_socket, (struct sockaddr *)&address, (socklen_t*)&addrlen);
+			if (new_socket < 0)
+			{
+				printf("Accept error.\n");
+			}
+			printf("Accept Complete.\n");
+			//printf("New connection , socket fd is %d , ip is : %s , port : %d\n" , new_socket , inet_ntohl(address.sin_addr) , ntohs(address.sin_port));
+			ret = send(new_socket, "Hello World", 12, 0);
+			if (ret != 12)
+			{
+				printf("Send error.\n");
+			}
+			printf("sent Successfully.\n");
+
+			for (int i = 0; i < max_clients; i++)
+			{
+				if (client_socket[i] == 0)
+				{
+					client_socket[i] = new_socket;
+					printf("Adding to list of sockets as %d\n", client_socket[i]);
+					break;
+				}
+			}
+		}
+		
+		for (int i = 0; i < max_clients; i++)
+		{
+			sd = client_socket[i];
+			if (FD_ISSET(sd, &readfds))
+			{
+				ret = recv(sd, buffer, BUF_SIZE,0);
+				if (ret == 0)
+				{
+					getpeername(sd, (struct sockaddr*)&address,(socklen_t*)&addrlen);
+					//printf("Host disconnected , ip %s , port %d \n",inet_ntohl(address.sin_addr), ntohs(address.sin_port));
+					closesocket(sd);
+					client_socket[i] = 0;
+				}
+				else
+				{
+					buffer[ret] = '\0';
+					printf("Client sock(%d) sending:", sd);
+					printf(buffer);
+					send(sd, buffer, strlen(buffer), 0);
+				}
+
+			}
+			else
+			{
+				buffer[ret] = '\0';	
+				send(sd, buffer, strlen(buffer), 0);
+			}
+		}
+	}
+
+	return 0;
+}
